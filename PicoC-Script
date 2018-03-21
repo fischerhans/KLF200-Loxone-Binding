@@ -1,0 +1,143 @@
+//GLOBAL DEFINES
+#define RD_BLOCK_SIZE 128
+
+///GLOBAL VARS
+int DEBUG_LEVEL=1;
+char* IP_ADDRESS = "192.168.xxx.xxx";
+char* PORT = "80";
+char streamname[100];
+sprintf(streamname, "/dev/tcp/%s/%s/", IP_ADDRESS, PORT);
+
+///GENERAL HELPER Functions
+//execCommand executes the TCP Command (Http Request) and returns the response in the responseBuffer
+void execCommand(char* pTcpCmd ,char* responseBuffer, int responseBufferSize){
+  char szCommandBuffer[1024];
+  STREAM* pTcpStream = stream_create(streamname,0,0);
+  stream_write(pTcpStream,pTcpCmd,strlen(pTcpCmd)); // write to output buffer
+  stream_flush(pTcpStream); // flush output buffer
+
+  //Reading response
+  char szBuffer[400];
+  char szTmpBuffer[RD_BLOCK_SIZE];
+  int nCnt;
+  int nBytesReceived = 0;
+  // read stream
+  do
+  {
+    nCnt = stream_read(pTcpStream,szTmpBuffer,RD_BLOCK_SIZE,4000);
+
+    if (nCnt + nBytesReceived > responseBufferSize)
+    {
+      nBytesReceived = -1;
+      break; //File is too large
+    }
+    else if(nCnt > 0)
+    {
+      strncpy((char*)szBuffer + nBytesReceived, szTmpBuffer, nCnt);
+      strncpy((char*)responseBuffer + nBytesReceived, szTmpBuffer, nCnt); //Vielleicht
+      nBytesReceived += nCnt;
+    }
+  }
+  while (nCnt > 0);
+
+}
+
+//AUTH Function return token
+void authenticate(char* tokenBuffer){
+  char tempBuffer[1024];
+  char szCommandBuffer[1024];
+  char szResponeBuffer[1024];
+  char* body="{\"action\":\"login\",\"params\":{\"password\":\"velux123\"}}";
+
+  sprintf(szCommandBuffer, "POST /api/v1/auth HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n Content-Type: application/json;charset=utf-8\r\n Content-Length: %d\r\n\r\n%s",
+   IP_ADDRESS, strlen(body), body);
+
+  //execute http command
+  execCommand(szCommandBuffer,szResponeBuffer,1024);
+
+  printf("Velux API: login");
+
+  if (DEBUG_LEVEL > 0) printf(szCommandBuffer);
+  if (DEBUG_LEVEL > 0) printf("szResponeBuffer:");
+  if (DEBUG_LEVEL > 0) printf(szResponeBuffer);
+
+  tempBuffer = strstrskip(szResponeBuffer,"token\":\"");
+  strncpy (tokenBuffer, tempBuffer, 24);
+  if (DEBUG_LEVEL > 0) printf("tokenBuffer");
+  if (DEBUG_LEVEL > 0) printf(tokenBuffer);
+
+}
+
+
+//LOGOUT Function return token
+void logout(char* tokenBuffer){
+
+  char szCommandBuffer[1024];
+  char szResponeBuffer[1024];
+  char* body="{\"action\":\"logout\",\"params\":{}}";
+
+  sprintf(szCommandBuffer, "POST /api/v1/auth HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n Connection-Type: application/json;charset=utf-8\r\n Content-Length: %d\r\n\r\n%s",
+   IP_ADDRESS, strlen(body), body);
+
+  //execute http command
+  execCommand(szCommandBuffer,szResponeBuffer,1024);
+
+  printf("Velux API: logout");
+
+}
+
+
+//Run a Velux Program
+void runWindowProgram(int progNr){
+  char szTokenBuffer[1024];
+  authenticate(szTokenBuffer);
+  //TODO some error handling, if no token was set
+  //  if (DEBUG_LEVEL > 0) printf("Token  %c", szTokenBuffer);
+
+  char szCommandBuffer[1024];
+  char szResponeBuffer[1024];
+  //TODO how to add the program progNr int to char?
+  //int veluxProgNr = progNr + 1;
+  int veluxProgNr = progNr;
+
+  char* bodystart="{\"action\":\"run\",\"params\":{\"id\":";
+  char* bodyend="}}";
+
+  if (veluxProgNr < 10) int length = strlen(bodystart) + strlen(bodyend) + 1;
+  if (veluxProgNr > 9) int length = strlen(bodystart) + strlen(bodyend) + 2;
+
+  sprintf(szCommandBuffer, "POST /api/v1/scenes HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\nContent-Length: %d\r\nAuthorization: Bearer %s\r\n\r\n%s%d%s",
+    IP_ADDRESS, length, szTokenBuffer, bodystart, veluxProgNr, bodyend);
+
+  execCommand(szCommandBuffer,szResponeBuffer,1024);
+
+  if (DEBUG_LEVEL > 0) printf("szCommandBuffer");
+  if (DEBUG_LEVEL > 0) printf(szCommandBuffer);
+
+  printf("Velux API: Run program: %d", veluxProgNr);
+
+  //Logout
+  logout(szTokenBuffer);
+}
+
+
+//GLOBALS FOR EVENT LOOP
+int nEvent;
+float f1;
+//MAIN EVENT LOOP
+//RUNS FOREVER
+while (1==1) {
+        nEvent = getinputevent();
+    int i;
+    for (i = 0; i < 12; i++){
+       if (nEvent & 0x8 << i){
+        f1 = getinput(i);
+           printf("Velux API: Input Event received at %d with %f ",i+1 ,f1);
+           if(f1 > 0.5f){
+              runWindowProgram(f1);
+           }
+       }
+        }
+    //GIVE others time to run
+    sleep(100);
+}
